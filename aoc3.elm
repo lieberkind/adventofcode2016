@@ -3,7 +3,7 @@ import Html exposing (..)
 import Json.Decode as Decode
 
 
-
+main : Program Never Model Msg
 main =
     Html.program
     { init = init
@@ -69,6 +69,8 @@ init =
 
 
 -- UPDATE
+
+
 type Msg
     = FetchInput
     | InputLoaded (Result Http.Error (List String))
