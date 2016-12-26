@@ -1,10 +1,13 @@
-module AOC8 exposing (createDisplay, turnOn, rect, flip, rotate, rotateRow, rotateColumn, solvePt2, parseString)
+module AOC8 exposing (createDisplay, turnOn, rect, flip, rotate, rotateRow, rotateColumn, parseString)
 
 import Array exposing (repeat, length, append, slice, Array)
 import Regex exposing (regex, contains, find, HowMany (..))
 import Http
 import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (onClick)
 import Json.Decode as Decode
+import Time exposing (Time, millisecond)
 
 
 main : Program Never Model Msg
@@ -22,14 +25,16 @@ main =
 
 
 type alias Model =
-    { result : Int
+    { display : Display
+    , instructions : List Instruction
     , loading : Bool
+    , playing : Bool
     }
 
 
 init : (Model, Cmd Msg)
 init =
-    (Model 0 True, fetchInput)
+    (Model (createDisplay 50 6) [] True False, fetchInput)
 
 
 
@@ -39,6 +44,10 @@ init =
 type Msg
     = FetchInput
     | InputLoaded (Result Http.Error (List String))
+    | NextInstruction (List Instruction)
+    | AllInstructions (List Instruction)
+    | TogglePlay
+    | Tick Time
 
 
 update : Msg -> Model -> (Model, Cmd Msg)
@@ -48,19 +57,110 @@ update msg model =
             ({ model | loading = True}, fetchInput)
         
         InputLoaded (Ok strs) ->
-            (Model (solvePt1 strs) False, Cmd.none)
+            (Model model.display (parseInput strs) False False, Cmd.none)
 
         InputLoaded (Err _) ->
             (model, Cmd.none)
+        
+        NextInstruction instrs ->
+            case instrs of
+                instr :: instrs ->
+                    let newModel =
+                        { model | 
+                            display = (followInstruction instr model.display),
+                            instructions = instrs,
+                            playing = False
+                        }
+                    in
+                        (newModel, Cmd.none)
 
+                _ ->
+                    ({ model | playing = False}, Cmd.none)
+        
+        AllInstructions instrs ->
+            let newModel =
+                { model | 
+                    display = (followInstructions instrs model.display),
+                    instructions = [],
+                    playing = False
+                }
+            in
+                (newModel, Cmd.none)
+        
+        TogglePlay ->
+            ({ model | playing = not model.playing }, Cmd.none)
+        
+        Tick _ ->
+            case model.instructions of
+                instr :: instrs ->
+                    let newModel =
+                        { model |
+                            display = (followInstruction instr model.display),
+                            instructions = instrs
+                        }
+                    in
+                        (newModel, Cmd.none)
+
+                _ ->
+                    ({ model | playing = False }, Cmd.none)
 
 
 -- VIEW
 
 
+isOn : Pixel -> Bool
+isOn pixel =
+    case pixel of
+        On -> True
+        Off -> False
+
+
+pixel : Pixel -> Html Msg
+pixel pixel =
+    div 
+        [ style
+            [ ("border-radius", "50%")
+            , ("float", "left")
+            , ("width", "10px")
+            , ("height", "10px")
+            , ("background", if isOn pixel then "limegreen" else "black")
+            ]
+        ]
+        []
+
+
+row : Array Pixel -> Html Msg
+row pixels =
+    div
+        [ style [ ("overflow", "hidden") ] ]
+        (Array.map pixel pixels |> Array.toList)
+
+
+display : Display -> Html Msg
+display display =
+    div
+        [ style
+            [ ("background", "black")
+            , ("padding", "5px")
+            , ("max-width", "500px")
+            ]
+        ]
+        (Array.map row display |> Array.toList)
+
+
 view : Model -> Html Msg
 view model =
-  h2 [] [text (if model.loading then "Loading..." else (toString model.result))]
+    let
+        loadingHtml = h2 [] [text "Loading..." ]
+        displayHtml = display model.display
+    in
+        div []
+            [ if model.loading then loadingHtml else displayHtml
+            , button [onClick (NextInstruction model.instructions)] [ text "Next Instruction" ]
+            , button [onClick (TogglePlay)] [ text (if model.playing then "Stop" else "Play") ]
+            , button [onClick (AllInstructions model.instructions)] [ text "All Instructions" ]
+            ]
+        
 
 
 
@@ -69,7 +169,9 @@ view model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    if model.playing
+    then Time.every (20 * millisecond) Tick
+    else Sub.none
 
 
 
@@ -80,7 +182,7 @@ fetchInput : Cmd Msg
 fetchInput =
     let 
         url =
-            "https://raw.githubusercontent.com/lieberkind/adventofcode2016/master/aoc3.input.json"
+            "https://raw.githubusercontent.com/lieberkind/adventofcode2016/master/aoc8.input.json"
     in
         Http.send InputLoaded (Http.get url decodeStringList)
 
@@ -237,8 +339,8 @@ rotateColumn x display =
 rotate : Array a -> Array a
 rotate arr =
     let
-        init = (slice -1 (length arr) arr)
-        last = (slice 0 -1 arr)
+        last = (slice -1 (length arr) arr)
+        init = (slice 0 -1 arr)
     in
         append last init
 
@@ -251,10 +353,13 @@ unsafeGet idx arr =
         case element of
             Just elem -> elem
             Nothing -> Debug.crash ("No element at index " ++ toString idx)
-    
 
-solvePt2 : Display
-solvePt2 =
-    input
-    |> List.concatMap parseString
-    |> List.foldl followInstruction (createDisplay 50 6)
+
+parseInput : List String -> List Instruction
+parseInput input =
+    List.concatMap parseString input
+
+
+followInstructions : List Instruction -> Display -> Display
+followInstructions instrs display =
+    List.foldl followInstruction display instrs
