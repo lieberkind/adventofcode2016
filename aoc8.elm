@@ -1,7 +1,7 @@
 module AOC8 exposing (createDisplay, turnOn, rect, flip, rotate, rotateRow, rotateColumn, parseString)
 
 import Array exposing (repeat, length, append, slice, Array)
-import Regex exposing (regex, contains, find, HowMany (..))
+import Regex exposing (regex, HowMany (..))
 import Http
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -18,6 +18,206 @@ main =
     , update = update
     , subscriptions = subscriptions
     }
+
+
+
+-- AOC8 PT. 2 SOLUTION
+
+
+type Led
+    = On
+    | Off
+
+
+type alias Display =
+    Array (Array Led)    
+
+
+type Instruction
+    = Rect Int Int
+    | RotateRow Int
+    | RotateColumn Int
+    | NoOp
+
+
+parseString : String -> List Instruction
+parseString str =
+    let
+        rectRegex =
+            regex "^rect ([0-9]+)x([0-9]+)$"
+
+        rotateColumnRegex =
+            regex "^rotate column x=([0-9]+) by ([0-9]+)$"
+
+        rotateRowRegex =
+            regex "^rotate row y=([0-9]+) by ([0-9]+)$"
+
+        getPotentialIntegers : List Regex.Match -> List (Maybe Int)
+        getPotentialIntegers matches =
+            matches
+            |> List.concatMap .submatches
+            |> List.map (Maybe.andThen (String.toInt >> Result.toMaybe))
+        
+        toInstructionList : (Int -> Int -> List Instruction) -> List (Maybe Int) -> List Instruction
+        toInstructionList constructor potentialIntegers =
+            case potentialIntegers of
+                [Just a, Just b] ->
+                    constructor a b
+                
+                _ ->
+                    [NoOp]
+    in
+        if Regex.contains rectRegex str then
+            Regex.find All rectRegex str
+            |> getPotentialIntegers
+            |> toInstructionList (\a b -> [Rect a b])
+
+        else if Regex.contains rotateColumnRegex str then
+            Regex.find All rotateColumnRegex str
+            |> getPotentialIntegers
+            |> toInstructionList (\a b -> List.repeat b (RotateColumn a))
+
+        else if Regex.contains rotateRowRegex str then
+            Regex.find All rotateRowRegex str
+            |> getPotentialIntegers
+            |> toInstructionList (\a b -> List.repeat b (RotateRow a))
+
+        else
+            [NoOp]
+
+
+parseInput : List String -> List Instruction
+parseInput input =
+    List.concatMap parseString input
+
+
+rect : Int -> Int -> Display -> Display
+rect x y display =
+    let
+        positions =
+            Array.initialize x (\b -> Array.initialize y (\a -> (b, a)))
+            |> flattenArray
+            |> Array.toList
+    in 
+        turnOnAll positions display
+
+
+rotateRow : Int -> Display -> Display
+rotateRow y display =
+    let row =
+        Array.get y display
+    in
+        case row of
+            Just row -> Array.set y (rotate row) display
+            Nothing -> display
+
+
+rotateColumn : Int -> Display -> Display
+rotateColumn x display =
+    flip display
+    |> rotateRow x
+    |> flip
+
+
+followInstruction : Instruction -> Display -> Display
+followInstruction instr disp =
+    case instr of
+        Rect x y ->
+            rect x y disp
+
+        RotateRow y ->
+            rotateRow y disp
+        
+        RotateColumn x ->
+            rotateColumn x disp
+        
+        NoOp ->
+            disp
+
+
+followInstructions : List Instruction -> Display -> Display
+followInstructions instrs display =
+    List.foldl followInstruction display instrs
+
+
+
+-- DISPLAY HELPERS
+
+
+createDisplay : Int -> Int -> Display
+createDisplay x y =
+    repeat y (repeat x Off)
+
+
+turnOn : (Int, Int) -> Display -> Display
+turnOn position display =
+    let (x, y, row) =
+        ( Tuple.first position
+        , Tuple.second position        
+        , Array.get (Tuple.second position) display
+        )
+    in
+        case row of
+            Just row ->
+                let newRow =
+                    Array.set x On row
+                in
+                    Array.set y newRow display
+
+            _ ->
+                display
+
+
+turnOnAll : List (Int, Int) -> Display -> Display
+turnOnAll positions display =
+    case positions of
+        p :: ps ->
+            turnOnAll ps (turnOn p display)
+        
+        _ ->
+            display
+
+
+-- This is really smart, but I probably won't understand it tommorrow
+flip : Display -> Display
+flip arr =
+    let arrayLength =
+        (unsafeGet 0 arr |> Array.length)
+    in
+        Array.initialize
+            arrayLength
+            (\a -> 
+                Array.initialize (length arr) 
+                (\b -> 
+                    unsafeGet b arr |> (unsafeGet a)
+                )
+            )
+
+-- ARRAY HELPERS
+
+
+rotate : Array a -> Array a
+rotate arr =
+    let
+        last = (slice -1 (length arr) arr)
+        init = (slice 0 -1 arr)
+    in
+        append last init
+
+
+unsafeGet : Int -> Array a -> a
+unsafeGet idx arr =
+    let element =
+        Array.get idx arr
+    in
+        case element of
+            Just elem -> elem
+            Nothing -> Debug.crash ("No element at index " ++ toString idx)
+
+
+flattenArray : Array (Array a) -> Array a
+flattenArray =
+    Array.foldr Array.append Array.empty
 
 
 
@@ -108,14 +308,14 @@ update msg model =
 -- VIEW
 
 
-isOn : Pixel -> Bool
+isOn : Led -> Bool
 isOn pixel =
     case pixel of
         On -> True
         Off -> False
 
 
-pixel : Pixel -> Html Msg
+pixel : Led -> Html Msg
 pixel pixel =
     div 
         [ style
@@ -129,7 +329,7 @@ pixel pixel =
         []
 
 
-row : Array Pixel -> Html Msg
+row : Array Led -> Html Msg
 row pixels =
     div
         [ style [ ("overflow", "hidden") ] ]
@@ -190,176 +390,3 @@ fetchInput =
 decodeStringList : Decode.Decoder (List String)
 decodeStringList =
     (Decode.list Decode.string)
-
-
-
--- AOC8 PT. 2 SOLUTION
-
-
-type Pixel = On | Off
-
-type alias Display = Array (Array Pixel)    
-
-type Instruction = 
-    Rect Int Int
-    | RotateRow Int
-    | RotateColumn Int
-    | Noop
-
-
-followInstruction : Instruction -> Display -> Display
-followInstruction instr disp =
-    case instr of
-        Rect x y       -> rect x y disp
-        RotateRow y    -> rotateRow y disp
-        RotateColumn x -> rotateColumn x disp
-        Noop           -> disp
-
-
-rectRegex : Regex.Regex
-rectRegex =
-    regex "^rect ([0-9]+)x([0-9]+)$"
-
-
-rotateColumnRegex : Regex.Regex
-rotateColumnRegex =
-    regex "^rotate column x=([0-9]+) by ([0-9]+)$"
-
-
-rotateRowRegex : Regex.Regex
-rotateRowRegex =
-    regex "^rotate row y=([0-9]+) by ([0-9]+)$"
-
-
-parseString : String -> List Instruction
-parseString str =
-    if contains rectRegex str then
-        find All rectRegex str
-        |> List.concatMap .submatches
-        |> List.map (Maybe.andThen (String.toInt >> Result.toMaybe))
-        |> (\n -> 
-            case n of
-              [Just a, Just b] -> [Rect a b]
-              _                -> [Noop]
-        )
-    else if contains rotateColumnRegex str then
-        find All rotateColumnRegex str
-        |> List.concatMap .submatches
-        |> List.map (Maybe.andThen (String.toInt >> Result.toMaybe))
-        |> (\n -> 
-            case n of
-              [Just a, Just b] -> List.repeat b (RotateColumn a)
-              _                -> [Noop]
-        )
-    else if contains rotateRowRegex str then
-        find All rotateRowRegex str
-        |> List.concatMap .submatches
-        |> List.map (Maybe.andThen (String.toInt >> Result.toMaybe))
-        |> (\n -> 
-            case n of
-              [Just a, Just b] -> List.repeat b (RotateRow a)
-              _                -> [Noop]
-        )
-    else
-        [Noop]
-
-
-createDisplay : Int -> Int -> Display
-createDisplay x y =
-    repeat y (repeat x Off)
-
-
-turnOn : (Int, Int) -> Display -> Display
-turnOn position display =
-    let
-        x = Tuple.first position
-        y = Tuple.second position        
-        row = Array.get y display    
-    in
-        case row of
-            Just row ->
-                let newRow =
-                    Array.set x On row
-                in
-                    Array.set y newRow display
-
-            _ ->
-                display
-
-
-rect : Int -> Int -> Display -> Display
-rect x y display =
-    let
-        positions =
-            Array.initialize x (\b -> Array.initialize y (\a -> (b, a)))
-            |> Array.foldr Array.append Array.empty
-            |> Array.toList
-        
-        reducer ps disp =
-            case ps of
-                p :: ps -> reducer ps (turnOn p disp)
-                []      -> disp
-    in 
-        reducer positions display
-
-
--- This is really smart, but I probably won't understand it tommorrow
-flip : Display -> Display
-flip arr =
-    let arrayLength =
-        (unsafeGet 0 arr |> Array.length)
-    in
-        Array.initialize
-            arrayLength
-            (\a -> 
-                Array.initialize (length arr) 
-                (\b -> 
-                    unsafeGet b arr |> (unsafeGet a)
-                )
-            )
-
-
-rotateRow : Int -> Display -> Display
-rotateRow y display =
-    let row =
-        Array.get y display
-    in
-        case row of
-            Just row -> Array.set y (rotate row) display
-            Nothing -> display
-
-
-rotateColumn : Int -> Display -> Display
-rotateColumn x display =
-    flip display
-    |> rotateRow x
-    |> flip
-
-
-rotate : Array a -> Array a
-rotate arr =
-    let
-        last = (slice -1 (length arr) arr)
-        init = (slice 0 -1 arr)
-    in
-        append last init
-
-
-unsafeGet : Int -> Array a -> a
-unsafeGet idx arr =
-    let element =
-        Array.get idx arr
-    in
-        case element of
-            Just elem -> elem
-            Nothing -> Debug.crash ("No element at index " ++ toString idx)
-
-
-parseInput : List String -> List Instruction
-parseInput input =
-    List.concatMap parseString input
-
-
-followInstructions : List Instruction -> Display -> Display
-followInstructions instrs display =
-    List.foldl followInstruction display instrs
